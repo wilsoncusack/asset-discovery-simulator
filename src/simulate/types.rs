@@ -7,6 +7,18 @@ pub struct Call {
     pub data: Bytes,
 }
 
+impl Call {
+    // Add a constructor for more ergonomic usage
+    pub fn new(from: Address, to: Address, data: impl Into<Bytes>, value: impl Into<U256>) -> Self {
+        Self {
+            from,
+            to,
+            value: value.into(),
+            data: data.into(),
+        }
+    }
+}
+
 pub struct ForkInfo {
     pub rpc_url: Option<String>,
     pub block_number: Option<u64>,
