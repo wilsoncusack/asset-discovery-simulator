@@ -18,15 +18,47 @@ pub struct ForkInfo {
     pub block_number: Option<u64>,
 }
 
+#[derive(Debug)]
 pub struct MissingERC20AssetInfo {
     pub token_address: Address,
-    pub total_amount: U256,
-    pub amount_needed: U256,
+    pub account: Address,
+    pub amount: U256,
 }
 
 sol! {
   function transfer(address to, uint256 amount) public returns (bool);
   function transferFrom(address from, address to, uint256 amount) public returns (bool);
+}
+
+// Add this trait to abstract the common functionality
+trait ERC20CallChecker {
+    fn check_call(trace: &CallTrace) -> Option<MissingERC20AssetInfo>;
+}
+
+// Implement for transfer calls
+struct TransferChecker;
+impl ERC20CallChecker for TransferChecker {
+    fn check_call(trace: &CallTrace) -> Option<MissingERC20AssetInfo> {
+        let decode_result = transferCall::abi_decode(&trace.data);
+        decode_result.ok().map(|decoded| MissingERC20AssetInfo {
+            token_address: trace.address,
+            account: trace.caller,
+            amount: decoded.amount,
+        })
+    }
+}
+
+// Implement for transferFrom calls
+struct TransferFromChecker;
+impl ERC20CallChecker for TransferFromChecker {
+    fn check_call(trace: &CallTrace) -> Option<MissingERC20AssetInfo> {
+        let decode_result = transferFromCall::abi_decode(&trace.data);
+        decode_result.ok().map(|decoded| MissingERC20AssetInfo {
+            token_address: trace.address,
+            account: Address::from_slice(decoded.from.as_slice()),
+            amount: decoded.amount,
+        })
+    }
 }
 
 pub async fn check_missing_assets(
@@ -52,71 +84,69 @@ pub async fn check_missing_assets(
     // println!("result: {:?}", result);
 
     if result.exit_reason.is_revert() {
-       // find last call before the revert 
-       // decode against erc20 calls: transfer, transferFrom, transfer with authorization (3009), permit transfer
-       if let Some(traces) = result.traces {
-        let missing_erc20_assets = traces.nodes().into_iter().rev().map(|trace_node| {
-          let decode_result = transferCall::abi_decode(&trace_node.trace.data.as_ref());
-          if decode_result.is_ok() {
-            let missing = MissingERC20AssetInfo {
-              token_address: trace_node.trace.address,
-              total_amount: decode_result.unwrap().amount,
-              amount_needed: // TODO: fetch balanceOf caller, note this is specific to transfer, transferFrom would take argument from call. Would be good to decompose  
+      //  // find last call before the revert 
+      //  // decode against erc20 calls: transfer, transferFrom, transfer with authorization (3009), permit transfer
+       if let Some(trace_arena) = result.traces {
+        let traces: Vec<&CallTrace> = trace_arena.nodes().iter().map(|trace_node| { &trace_node.trace }).collect();
+        let trace = find_last_non_proxy_call(&traces)?;
+
+        // Try all checkers in sequence
+        let checkers: [&dyn Fn(&CallTrace) -> Option<MissingERC20AssetInfo>; 2] = [
+            &TransferChecker::check_call,
+            &TransferFromChecker::check_call,
+        ];
+        
+        for checker in checkers {
+            if let Some(missing_asset) = checker(trace) {
+                return Ok(vec![missing_asset]);
             }
-           // TODO prior calls for delegated calls. If prior calls matches calldata
-           // keep going until you find defering calldata 
-          }
         }
        }
+      //   let missing_erc20_assets = traces.nodes().into_iter().rev().map(|trace_node| {
+      //     let decode_result = transferCall::abi_decode(&trace_node.trace.data.as_ref());
+      //     if decode_result.is_ok() {
+      //       let missing = MissingERC20AssetInfo {
+      //         token_address: trace_node.trace.address,
+      //         total_amount: decode_result.unwrap().amount,
+      //         amount_needed: // TODO: fetch balanceOf caller, note this is specific to transfer, transferFrom would take argument from call. Would be good to decompose  
+      //       }
+      //      // TODO prior calls for delegated calls. If prior calls matches calldata
+      //      // keep going until you find defering calldata 
+      //     }
+      //   }
+      //  }
     }
     
     
     Ok(vec![])
 }
 
-fn check_ERC20_caused_reverts(traces: [SparsedTraceArena]) -> Result<Vec<MissingERC20AssetInfo>, eyre::Error> {
-  let trace = &find_last_non_proxy_call(&trace_arena.nodes())?.trace;
-  let caller = trace.caller;
-  // get balanceOf Caller
-  Ok(vec![])
-}
-
-fn check_transfer(trace: CallTrace) -> MissingERC20AssetInfo {
-  let missing = MissingERC20AssetInfo {
-    token_address: trace.address,
-    total_amount: U256::ZERO,
-    amount_needed: U256::ZERO,
-  };
-
-  missing
-}
-
-fn find_last_non_proxy_call(nodes: &[CallTraceNode]) -> Result<&CallTraceNode, eyre::Error> {
-  let len = nodes.len();
-  let mut cur_index = len - 1;
-  let mut cur = &nodes[cur_index];
-  let mut is_checked = false;
-
-  while !is_checked {
-    if cur.trace.kind == CallKind::DelegateCall {
-      if cur.trace.data == nodes[cur_index - 1].trace.data {
-        cur_index -= 1;
-        cur = &nodes[cur_index];
-      } else {
-        is_checked = true;
-      }
-    }
+fn find_last_non_proxy_call<'a>(traces: &'a [&'a CallTrace]) -> Result<&'a CallTrace, eyre::Error> {
+  if traces.is_empty() {
+      return Err(eyre::eyre!("No traces provided"));
   }
-
+  
+  let mut cur_index = traces.len() - 1;
+  let mut cur = traces[cur_index];
+  
+  while cur_index > 0 && cur.kind == CallKind::DelegateCall {
+      let prior_call = traces[cur_index - 1];
+      if cur.data == prior_call.data {
+          cur_index -= 1;
+          cur = prior_call;
+      } else {
+          break;
+      }
+  }
+  
   Ok(cur)
 }
 
 
 #[cfg(test)]
 mod tests {
-    use crate::simulate::check_missing_assets::transferCall;
-
-    use super::{Call, ForkInfo, check_missing_assets};
+    use super::{Call, ForkInfo, check_missing_assets, transferCall};
+    use alloy_sol_types::SolCall;
     use forge::revm::primitives::{hex::FromHex, Address, Bytes, U256};
     use alloy_primitives::{Address as AAddress};
 
@@ -163,6 +193,7 @@ mod tests {
       let result = check_missing_assets(call, ForkInfo::default())
         .await
         .unwrap();
+      println!("result: {:?}", result.first());
       assert!(result.is_empty());
     }
 }
