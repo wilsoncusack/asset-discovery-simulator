@@ -1,7 +1,7 @@
 This is a rough start on a tool to simulate EVM transactions and discover 
 what assets are needed, in what amount, and for which accounts, in order for the transaction to succeed.
 
-TODO
+### TODO
 - [x] Handle proxied calls
 - [ ] More test coverage: 
   - [ ] When revert is from allowance not token amount
