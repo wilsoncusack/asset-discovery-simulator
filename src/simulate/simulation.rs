@@ -140,13 +140,10 @@ impl AssetSimulator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::simulate::{
-        AssetType,
-        checkers::erc20::{transferCall, transferFromCall},
-    };
+    use crate::simulate::{AssetType, checkers::erc20::transferFromCall};
     use alloy_primitives::Address as AAddress;
     use alloy_sol_types::SolCall;
-    use forge::revm::primitives::{Address, U256, hex::FromHex};
+    use forge::revm::primitives::{Address, U256};
     use std::str::FromStr;
 
     #[tokio::test(flavor = "multi_thread")]

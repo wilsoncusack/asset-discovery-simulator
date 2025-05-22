@@ -46,7 +46,7 @@ impl ERC20TransferCheck for transferCall {
 
 // Implementation for transferFrom
 impl ERC20TransferCheck for transferFromCall {
-    fn get_account(&self, trace: &CallTrace) -> Address {
+    fn get_account(&self, _trace: &CallTrace) -> Address {
         Address::from_slice(self.from.as_slice())
     }
 
