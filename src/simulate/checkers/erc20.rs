@@ -1,8 +1,8 @@
 use alloy_primitives::Address as AAddress;
-use alloy_sol_types::{sol, SolCall};
+use alloy_sol_types::{SolCall, sol};
+use forge::executors::Executor;
 use forge::revm::primitives::{Address, U256};
 use forge::traces::CallTrace;
-use forge::executors::Executor;
 
 use crate::simulate::checkers::traits::{AssetChecker, PotentialMissingAsset};
 use crate::simulate::types::{AssetType, MissingAssetInfo};
@@ -38,7 +38,7 @@ impl ERC20TransferCheck for transferCall {
     fn get_account(&self, trace: &CallTrace) -> Address {
         trace.caller
     }
-    
+
     fn get_amount(&self) -> U256 {
         self.amount
     }
@@ -49,7 +49,7 @@ impl ERC20TransferCheck for transferFromCall {
     fn get_account(&self, trace: &CallTrace) -> Address {
         Address::from_slice(self.from.as_slice())
     }
-    
+
     fn get_amount(&self) -> U256 {
         self.amount
     }
@@ -66,8 +66,14 @@ impl ERC20Checker {
         // Initialize with all supported transfer types
         Self {
             transfer_checkers: vec![
-                |data| transferCall::try_decode(data).map(|d| Box::new(d) as Box<dyn ERC20TransferCheck>),
-                |data| transferFromCall::try_decode(data).map(|d| Box::new(d) as Box<dyn ERC20TransferCheck>),
+                |data| {
+                    transferCall::try_decode(data)
+                        .map(|d| Box::new(d) as Box<dyn ERC20TransferCheck>)
+                },
+                |data| {
+                    transferFromCall::try_decode(data)
+                        .map(|d| Box::new(d) as Box<dyn ERC20TransferCheck>)
+                },
                 // Add more transfer types here as needed
             ],
         }
@@ -77,7 +83,7 @@ impl ERC20Checker {
 impl AssetChecker for ERC20Checker {
     fn identify_asset(&self, trace: &CallTrace) -> Option<PotentialMissingAsset> {
         let data = trace.data.as_ref();
-        
+
         // Try each transfer checker until one succeeds
         for try_decode in &self.transfer_checkers {
             if let Some(decoded) = try_decode(data) {
@@ -89,36 +95,37 @@ impl AssetChecker for ERC20Checker {
                 });
             }
         }
-        
+
         None
     }
-    
+
     fn check_balance(
-        &self, 
-        asset: PotentialMissingAsset, 
-        executor: &mut Executor
+        &self,
+        asset: PotentialMissingAsset,
+        executor: &mut Executor,
     ) -> Result<MissingAssetInfo, eyre::Error> {
         // Execute the balanceOf call
-        let balance_call = balanceOfCall { 
-            account: AAddress::from_slice(asset.account.as_slice())
+        let balance_call = balanceOfCall {
+            account: AAddress::from_slice(asset.account.as_slice()),
         };
         let balance_data = balance_call.abi_encode();
-        
+
         let balance_result = executor.call_raw(
             asset.account,
             asset.token_address,
             balance_data.into(),
-            U256::ZERO
+            U256::ZERO,
         )?;
-        
+
         // Parse the result more idiomatically
-        let current_balance = balance_result.out
+        let current_balance = balance_result
+            .out
             .and_then(|out| balanceOfCall::abi_decode_returns(&out.data()).ok())
             .unwrap_or(U256::ZERO);
-        
+
         // Calculate missing amount more concisely
         let missing_amount = asset.required_amount.saturating_sub(current_balance);
-        
+
         Ok(MissingAssetInfo {
             asset_type: asset.asset_type,
             token_address: asset.token_address,
@@ -128,4 +135,4 @@ impl AssetChecker for ERC20Checker {
             missing_amount,
         })
     }
-} 
+}

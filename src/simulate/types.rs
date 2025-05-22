@@ -24,7 +24,7 @@ pub struct ForkInfo {
     pub block_number: Option<u64>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum AssetType {
     ERC20,
     ERC721,
@@ -63,4 +63,4 @@ impl Default for ForkInfo {
             block_number: Some(30155463),
         }
     }
-} 
+}
