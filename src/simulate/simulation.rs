@@ -142,9 +142,36 @@ mod tests {
     use super::*;
     use crate::simulate::{AssetType, checkers::erc20::transferFromCall};
     use alloy_primitives::Address as AAddress;
-    use alloy_sol_types::SolCall;
-    use forge::revm::primitives::{Address, U256};
+    use alloy_sol_types::{sol, SolCall};
+    use forge::revm::primitives::{AccountInfo, Address, Bytecode, U256, Bytes};
+    use MockERC20::MockERC20Calls;
     use std::str::FromStr;
+
+    sol!(
+        contract MockERC20 {
+            function transferFrom(address from, address to, uint256 amount) public returns (bool) {
+                return true;
+            }
+        }
+    );
+    
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_local_network() {
+        let contract_address = Address::new([1; 20]);
+        let mut backend_owner = Backend::spawn(None);
+        let backend = backend_owner.as_mut().unwrap();
+
+        let bytecode = Bytes::from_str("0x608060405234801561000f575f80fd5b506004361061004a575f3560e01c80632a1afcd91461004e57806342cbb15c1461006c57806360fe47b11461008a5780636d4ce63c146100a6575b5f80fd5b6100566100c4565b6040516100639190610130565b60405180910390f35b6100746100c9565b6040516100819190610130565b60405180910390f35b6100a4600480360381019061009f9190610177565b6100d0565b005b6100ae610110565b6040516100bb9190610130565b60405180910390f35b5f5481565b5f43905090565b805f819055507fe0dca1a932506e28dc1cd7f50b0604489287b36ba09c37f13b25ee518d813528816040516101059190610130565b60405180910390a150565b5f8054905090565b5f819050919050565b61012a81610118565b82525050565b5f6020820190506101435f830184610121565b92915050565b5f80fd5b61015681610118565b8114610160575f80fd5b50565b5f813590506101718161014d565b92915050565b5f6020828403121561018c5761018b610149565b5b5f61019984828501610163565b9150509291505056fea2646970667358221220f7399e877793618afbf93c1ab591511f69fa1330a3fd5526ff45418127a04af964736f6c634300081a0033").unwrap();
+        let deployed_bytecode = Bytecode::new_raw(bytecode);
+        
+        // MockERC20;
+
+        backend.insert_account_info(contract_address, AccountInfo {
+            code_hash: deployed_bytecode.hash_slow(),
+            code: Some(deployed_bytecode),
+            ..Default::default()
+        });
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_empty_transaction() {
