@@ -1,7 +1,7 @@
+use crate::simulate::types::{AssetType, MissingAssetInfo};
 use forge::executors::Executor;
 use forge::revm::primitives::{Address, U256};
 use forge::traces::CallTrace;
-use crate::simulate::types::{AssetType, MissingAssetInfo};
 
 // Intermediate struct for identified assets before balance checking
 pub struct PotentialMissingAsset {
@@ -15,11 +15,11 @@ pub struct PotentialMissingAsset {
 pub trait AssetChecker {
     // First phase: identify potential missing assets
     fn identify_asset(&self, trace: &CallTrace) -> Option<PotentialMissingAsset>;
-    
+
     // Second phase: check balances and calculate missing amounts
     fn check_balance(
-        &self, 
-        asset: PotentialMissingAsset, 
-        executor: &mut Executor
+        &self,
+        asset: PotentialMissingAsset,
+        executor: &mut Executor,
     ) -> Result<MissingAssetInfo, eyre::Error>;
-} 
+}
