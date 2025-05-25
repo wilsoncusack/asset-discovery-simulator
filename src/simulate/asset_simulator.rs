@@ -1,10 +1,7 @@
 use crate::simulate::checkers::{AssetChecker, ERC20Checker};
 use crate::simulate::types::{Call, ForkInfo, MissingAssetInfo};
 use crate::simulate::utils::find_last_non_proxy_call;
-use alloy_primitives::Address as AAddress;
-use alloy_sol_types::{SolCall, sol};
 use forge::executors::Executor;
-use forge::revm::primitives::{AccountInfo, Address, Bytecode, Bytes};
 use forge::{
     backend::Backend,
     executors::ExecutorBuilder,
@@ -13,7 +10,6 @@ use forge::{
 };
 use foundry_config::Config;
 use foundry_evm_core::opts::EvmOpts;
-use std::str::FromStr;
 
 // Main simulator that orchestrates simulation and checking
 pub struct AssetSimulator {
@@ -156,7 +152,7 @@ mod tests {
     use crate::simulate::{AssetType, checkers::erc20::transferFromCall};
     use alloy_primitives::Address as AAddress;
     use alloy_sol_types::{SolCall, sol};
-    use forge::revm::primitives::{AccountInfo, Address, Bytecode, Bytes, U256};
+    use forge::revm::primitives::{Address, Bytes, U256};
     use std::str::FromStr;
 
     sol!(
