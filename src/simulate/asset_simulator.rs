@@ -203,38 +203,8 @@ mod tests {
         Ok(())
     }
 
-    // Shared setup for local network tests
-    async fn setup_local_erc20_test() -> Result<
-        (
-            AssetSimulator,
-            Address,
-            Address,
-            Address,
-            Address,
-            Address,
-            U256,
-        ),
-        eyre::Error,
-    > {
-        // Use unique addresses for each test to avoid conflicts
-        let test_id = std::thread::current().id();
-        let test_hash = format!("{:?}", test_id).chars().take(8).collect::<String>();
-
-        let sender = Address::from_str(&format!(
-            "0x100000000000000000000000000000000000{:0>4}",
-            &test_hash[..4]
-        ))
-        .unwrap_or(Address::from_str("0x1000000000000000000000000000000000000001").unwrap());
-        let recipient = Address::from_str(&format!(
-            "0x200000000000000000000000000000000000{:0>4}",
-            &test_hash[..4]
-        ))
-        .unwrap_or(Address::from_str("0x2000000000000000000000000000000000000002").unwrap());
-        let spender = Address::from_str(&format!(
-            "0x300000000000000000000000000000000000{:0>4}",
-            &test_hash[..4]
-        ))
-        .unwrap_or(Address::from_str("0x3000000000000000000000000000000000000003").unwrap());
+    // Simplified setup that just deploys the contract and returns basic info
+    async fn setup_local_erc20_test() -> Result<(AssetSimulator, Address), eyre::Error> {
         let minter = Address::repeat_byte(4);
 
         // Create the simulator with default local backend
@@ -261,23 +231,17 @@ mod tests {
 
         let contract_address = deploy_result.address;
 
-        let amount = U256::from(100);
-
-        Ok((
-            simulator,
-            contract_address,
-            sender,
-            recipient,
-            spender,
-            minter,
-            amount,
-        ))
+        Ok((simulator, contract_address))
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_successful_transfer_returns_empty() -> Result<(), eyre::Error> {
-        let (mut simulator, contract_address, sender, recipient, _spender, minter, amount) =
-            setup_local_erc20_test().await?;
+        let (mut simulator, contract_address) = setup_local_erc20_test().await?;
+
+        let sender = Address::from_str("0x1000000000000000000000000000000000000001").unwrap();
+        let recipient = Address::from_str("0x2000000000000000000000000000000000000002").unwrap();
+        let minter = Address::repeat_byte(4);
+        let amount = U256::from(100);
 
         // Mint tokens to sender
         mint_tokens(
@@ -311,8 +275,11 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_insufficient_balance_detected() -> Result<(), eyre::Error> {
-        let (mut simulator, contract_address, sender, recipient, _spender, _minter, amount) =
-            setup_local_erc20_test().await?;
+        let (mut simulator, contract_address) = setup_local_erc20_test().await?;
+
+        let sender = Address::from_str("0x1000000000000000000000000000000000000001").unwrap();
+        let recipient = Address::from_str("0x2000000000000000000000000000000000000002").unwrap();
+        let amount = U256::from(100);
 
         // Test transfer with insufficient balance (sender has 0 tokens in this fresh simulator)
         let transfer_call = Call::new(
@@ -327,7 +294,7 @@ mod tests {
         );
 
         let result = simulator.check_transaction(transfer_call).await?;
-        println!("result: {:?}", result);
+
         assert!(!result.is_empty(), "Should detect missing balance");
 
         if let Some(asset) = result.first() {
@@ -343,8 +310,13 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_allowance_issue_not_balance_issue() -> Result<(), eyre::Error> {
-        let (mut simulator, contract_address, sender, recipient, spender, minter, amount) =
-            setup_local_erc20_test().await?;
+        let (mut simulator, contract_address) = setup_local_erc20_test().await?;
+
+        let sender = Address::from_str("0x1000000000000000000000000000000000000001").unwrap();
+        let recipient = Address::from_str("0x2000000000000000000000000000000000000002").unwrap();
+        let spender = Address::from_str("0x3000000000000000000000000000000000000003").unwrap();
+        let minter = Address::repeat_byte(4);
+        let amount = U256::from(100);
 
         // Mint tokens to sender (so balance is sufficient)
         mint_tokens(
