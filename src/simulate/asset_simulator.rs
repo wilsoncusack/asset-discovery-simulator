@@ -1,5 +1,5 @@
 use crate::simulate::checkers::{AssetChecker, ERC20Checker};
-use crate::simulate::types::{Call, ForkInfo, MissingAssetInfo};
+use crate::simulate::types::{AssetContext, Call, ForkInfo, MissingAssetInfo};
 use crate::simulate::utils::find_last_non_proxy_call;
 use forge::executors::Executor;
 use forge::{
@@ -63,7 +63,7 @@ impl AssetSimulator {
         let env = self.env.clone();
         self.executor = Some(
             ExecutorBuilder::new()
-                .inspectors(|stack| stack.trace_mode(TraceMode::Call))
+                .inspectors(|stack| stack.trace_mode(TraceMode::Debug))
                 .build(env, backend),
         );
         self
@@ -85,49 +85,78 @@ impl AssetSimulator {
             let config = Config::default();
             let backend_setup_env = opts.evm_env().await?;
             let backend = Backend::spawn(opts.get_fork(&config, backend_setup_env))?;
-
             let executor_env = self.env.clone();
 
             self.executor = Some(
                 ExecutorBuilder::new()
-                    .inspectors(|stack| stack.trace_mode(TraceMode::Call))
+                    .inspectors(|stack| stack.trace_mode(TraceMode::Debug))
                     .build(executor_env, backend),
             );
         }
         Ok(())
     }
 
-    // Run the simulation and check for missing assets
+    /// Run the simulation and automatically fix missing assets until success
     pub async fn check_transaction(
         &mut self,
         call: Call,
     ) -> Result<Vec<MissingAssetInfo>, eyre::Error> {
+        self.check_transaction_with_options(call, true, 10).await
+    }
+
+    /// Run simulation with options for auto-fixing
+    pub async fn check_transaction_with_options(
+        &mut self,
+        call: Call,
+        auto_fix: bool,
+        max_iterations: usize,
+    ) -> Result<Vec<MissingAssetInfo>, eyre::Error> {
         self.ensure_executor().await?;
-        let executor = self
-            .executor
-            .as_mut()
-            .ok_or_else(|| eyre::eyre!("Executor not initialized"))?;
 
-        // Run the simulation
-        let result = executor.transact_raw(call.from, call.to, call.data, call.value)?;
+        for iteration in 0..max_iterations {
+            if auto_fix && iteration > 0 {
+                println!(
+                    "Iteration {}: Retrying transaction after fixes...",
+                    iteration + 1
+                );
+            }
 
-        // Process traces and apply checkers
-        let mut missing_assets = Vec::new();
+            let executor = self
+                .executor
+                .as_mut()
+                .ok_or_else(|| eyre::eyre!("Executor not initialized"))?;
 
-        if result.exit_reason.is_revert() {
+            // Run the simulation
+            let result =
+                executor.transact_raw(call.from, call.to, call.data.clone(), call.value)?;
+
+            // If transaction succeeded, return empty (no missing assets)
+            if !result.exit_reason.is_revert() {
+                if auto_fix && iteration > 0 {
+                    println!(
+                        "✅ Transaction succeeded after {} iteration(s)!",
+                        iteration + 1
+                    );
+                }
+                return Ok(Vec::new());
+            }
+
+            // Process traces and apply checkers
+            let mut missing_assets = Vec::new();
+
             if let Some(traces) = result.traces {
                 if let Some(trace) = find_last_non_proxy_call(&traces) {
-                    // Process all checkers and collect results more idiomatically
+                    // Process all checkers and collect results
                     missing_assets = self
                         .checkers
                         .iter()
                         .filter_map(|checker| {
                             checker.identify_asset(trace).and_then(|asset| {
-                                match checker.check_balance(asset, executor) {
+                                match checker.check_balance(asset.clone(), executor) {
                                     Ok(missing_asset)
                                         if missing_asset.missing_amount > U256::ZERO =>
                                     {
-                                        Some(missing_asset)
+                                        Some((missing_asset, asset, checker))
                                     }
                                     Ok(_) => None,
                                     Err(e) => {
@@ -137,19 +166,66 @@ impl AssetSimulator {
                                 }
                             })
                         })
-                        .collect();
+                        .collect::<Vec<_>>();
+
+                    // If auto_fix is enabled, try to deal the missing assets
+                    if auto_fix && !missing_assets.is_empty() {
+                        println!(
+                            "Found {} missing asset(s), attempting to deal...",
+                            missing_assets.len()
+                        );
+
+                        for (missing_asset, potential_asset, checker) in &missing_assets {
+                            // Create AssetContext for the deal operation
+                            let context =
+                                AssetContext::from_trace(potential_asset.clone(), trace.clone());
+
+                            println!("Dealing asset for account {:?}", missing_asset.account);
+                            println!("  Storage accesses: {:?}", context.storage_accesses);
+
+                            // Deal the asset
+                            checker.deal(
+                                missing_asset.account,
+                                missing_asset.required.clone(),
+                                executor,
+                                &context,
+                            )?;
+
+                            println!("✅ Dealt asset for account {:?}", missing_asset.account);
+                        }
+
+                        // Continue to next iteration to retry the transaction
+                        continue;
+                    }
                 }
             }
+
+            // If we're not auto-fixing or no missing assets found, return the results
+            return Ok(missing_assets
+                .into_iter()
+                .map(|(missing_asset, _, _)| missing_asset)
+                .collect());
         }
 
-        Ok(missing_assets)
+        Err(eyre::eyre!(
+            "Failed to fix transaction after {} iterations",
+            max_iterations
+        ))
+    }
+
+    /// Check transaction without auto-fixing (for testing/inspection)
+    pub async fn check_transaction_no_fix(
+        &mut self,
+        call: Call,
+    ) -> Result<Vec<MissingAssetInfo>, eyre::Error> {
+        self.check_transaction_with_options(call, false, 1).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::simulate::{checkers::erc20::transferFromCall, types::AssetSpec, AssetType};
+    use crate::simulate::{AssetType, checkers::erc20::transferFromCall, types::AssetSpec};
     use alloy_primitives::Address as AAddress;
     use alloy_sol_types::{SolCall, sol};
     use forge::revm::primitives::{Address, Bytes, U256};
@@ -289,7 +365,8 @@ mod tests {
             U256::ZERO,
         );
 
-        let result = simulator.check_transaction(transfer_call).await?;
+        // Use no_fix version to just detect without fixing
+        let result = simulator.check_transaction_no_fix(transfer_call).await?;
 
         assert!(!result.is_empty(), "Should detect missing balance");
 
@@ -297,8 +374,14 @@ mod tests {
             assert_eq!(asset.account, sender);
             assert_eq!(asset.missing_amount, amount);
             assert_eq!(asset.current_balance, U256::ZERO);
-            
-            assert_eq!(asset.required, AssetSpec::ERC20 { token: contract_address, amount });
+
+            assert_eq!(
+                asset.required,
+                AssetSpec::ERC20 {
+                    token: contract_address,
+                    amount
+                }
+            );
         }
         Ok(())
     }
@@ -380,7 +463,8 @@ mod tests {
             U256::ZERO,
         );
 
-        let result = simulator.check_transaction(call).await.unwrap();
+        // Use no_fix version to just detect without auto-fixing
+        let result = simulator.check_transaction_no_fix(call).await.unwrap();
 
         // We expect to find a missing asset since our test address likely doesn't have 1000 USDC
         assert!(!result.is_empty());
@@ -388,8 +472,43 @@ mod tests {
             assert_eq!(asset.account, sender);
             assert_eq!(asset.missing_amount, amount);
             assert_eq!(asset.current_balance, U256::ZERO);
-            
+
             assert_eq!(asset.required, AssetSpec::ERC20 { token, amount });
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_usdc_auto_fix_actually_works() -> Result<(), eyre::Error> {
+        let mut simulator = AssetSimulator::new()
+            .with_fork("https://mainnet.base.org", None)
+            .with_erc20_checker();
+
+        let sender = Address::new([1; 20]);
+        let recipient = Address::new([2; 20]);
+        let token = Address::from_str("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913").unwrap(); // USDC on Base
+        let amount = U256::from(1000000000); // 1000 USDC
+
+        let call = Call::new(
+            sender,
+            token,
+            transferFromCall {
+                from: AAddress::from_slice(sender.as_slice()),
+                to: AAddress::from_slice(recipient.as_slice()),
+                amount,
+            }
+            .abi_encode(),
+            U256::ZERO,
+        );
+
+        // This should auto-fix and succeed
+        let result = simulator.check_transaction(call).await?;
+
+        // If it returns empty, the auto-fix worked!
+        assert!(
+            result.is_empty(),
+            "Auto-fix should make the transaction succeed"
+        );
+        println!("🎉 USDC auto-fix actually works!");
+        Ok(())
     }
 }

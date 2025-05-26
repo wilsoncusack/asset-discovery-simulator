@@ -5,7 +5,7 @@ use forge::revm::primitives::{Address, U256};
 use forge::traces::CallTrace;
 
 use crate::simulate::checkers::traits::{AssetChecker, PotentialMissingAsset};
-use crate::simulate::types::{AssetType, MissingAssetInfo, AssetSpec};
+use crate::simulate::types::{AssetContext, AssetSpec, AssetType, MissingAssetInfo};
 
 // Define ERC20 function signatures
 sol! {
@@ -142,12 +142,63 @@ impl AssetChecker for ERC20Checker {
         recipient: Address,
         asset_spec: AssetSpec,
         executor: &mut Executor,
+        context: &AssetContext,
     ) -> Result<(), eyre::Error> {
-        // Validate that this is an ERC20 asset spec
         if let AssetSpec::ERC20 { token, amount } = asset_spec {
-            // TODO: Implement ERC20 deal functionality
-            // This would involve manipulating storage slots to set the balance
-            todo!("ERC20 deal implementation - need to set storage slot for balance mapping")
+            println!(
+                "Dealing ERC20: token={:?}, recipient={:?}, amount={}",
+                token, recipient, amount
+            );
+            println!("Storage accesses found: {:?}", context.storage_accesses);
+
+            if context.storage_accesses.is_empty() {
+                return Err(eyre::eyre!(
+                    "No storage accesses found in trace - cannot determine balance slot"
+                ));
+            }
+
+            let backend = executor.backend_mut();
+            let large_balance = U256::MAX >> 1; // Use a large but not max value
+
+            // Try patching all storage slots that were accessed
+            // This handles cases where balance might be split across multiple slots
+            // or where we need to patch both balance and total supply
+            for (i, &storage_slot) in context.storage_accesses.iter().enumerate() {
+                println!(
+                    "Patching storage slot {} of {}: {:?}",
+                    i + 1,
+                    context.storage_accesses.len(),
+                    storage_slot
+                );
+
+                backend.insert_account_storage(token, storage_slot, large_balance)?;
+
+                println!(
+                    "Successfully patched storage slot {:?} with balance {}",
+                    storage_slot, large_balance
+                );
+            }
+
+            // Also try to read the balance after patching to verify it worked
+            let balance_call = balanceOfCall {
+                account: AAddress::from_slice(recipient.as_slice()),
+            };
+            let balance_data = balance_call.abi_encode();
+
+            match executor.call_raw(recipient, token, balance_data.into(), U256::ZERO) {
+                Ok(balance_result) => {
+                    let new_balance = balance_result
+                        .out
+                        .and_then(|out| balanceOfCall::abi_decode_returns(&out.data()).ok())
+                        .unwrap_or(U256::ZERO);
+                    println!("After patching, balance check shows: {}", new_balance);
+                }
+                Err(e) => {
+                    println!("Warning: Could not verify balance after patching: {}", e);
+                }
+            }
+
+            Ok(())
         } else {
             Err(eyre::eyre!("ERC20Checker can only deal ERC20 assets"))
         }

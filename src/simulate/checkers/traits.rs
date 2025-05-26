@@ -1,9 +1,9 @@
-use crate::simulate::types::{AssetType, MissingAssetInfo, AssetSpec};
+use crate::simulate::types::{AssetContext, AssetSpec, AssetType, MissingAssetInfo};
 use forge::executors::Executor;
 use forge::revm::primitives::{Address, U256};
 use forge::traces::CallTrace;
 
-// Intermediate struct for identified assets before balance checking
+#[derive(Debug, Clone)]
 pub struct PotentialMissingAsset {
     pub asset_type: AssetType,
     pub token_address: Address,
@@ -29,6 +29,7 @@ pub trait AssetChecker {
         recipient: Address,
         asset_spec: AssetSpec,
         executor: &mut Executor,
+        context: &AssetContext,
     ) -> Result<(), eyre::Error>;
 
     // Helper to get the asset type this checker handles

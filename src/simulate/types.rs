@@ -1,5 +1,8 @@
 use forge::revm::primitives::{Address, Bytes, U256};
+use forge::traces::CallTrace;
 use std::collections::HashMap;
+
+use super::PotentialMissingAsset;
 
 pub struct Call {
     pub from: Address,
@@ -28,9 +31,18 @@ pub struct ForkInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AssetSpec {
     Native(U256),
-    ERC20 { token: Address, amount: U256 },
-    ERC721 { token: Address, token_ids: Vec<U256> },
-    ERC1155 { token: Address, token_amounts: HashMap<U256, U256> },
+    ERC20 {
+        token: Address,
+        amount: U256,
+    },
+    ERC721 {
+        token: Address,
+        token_ids: Vec<U256>,
+    },
+    ERC1155 {
+        token: Address,
+        token_amounts: HashMap<U256, U256>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -42,19 +54,34 @@ pub struct AssetGrant {
 impl AssetGrant {
     // Convenience constructors
     pub fn native(recipient: Address, amount: U256) -> Self {
-        Self { recipient, asset: AssetSpec::Native(amount) }
+        Self {
+            recipient,
+            asset: AssetSpec::Native(amount),
+        }
     }
-    
+
     pub fn erc20(recipient: Address, token: Address, amount: U256) -> Self {
-        Self { recipient, asset: AssetSpec::ERC20 { token, amount } }
+        Self {
+            recipient,
+            asset: AssetSpec::ERC20 { token, amount },
+        }
     }
-    
+
     pub fn erc721(recipient: Address, token: Address, token_ids: Vec<U256>) -> Self {
-        Self { recipient, asset: AssetSpec::ERC721 { token, token_ids } }
+        Self {
+            recipient,
+            asset: AssetSpec::ERC721 { token, token_ids },
+        }
     }
-    
+
     pub fn erc1155(recipient: Address, token: Address, token_amounts: HashMap<U256, U256>) -> Self {
-        Self { recipient, asset: AssetSpec::ERC1155 { token, token_amounts } }
+        Self {
+            recipient,
+            asset: AssetSpec::ERC1155 {
+                token,
+                token_amounts,
+            },
+        }
     }
 
     pub fn asset_type(&self) -> AssetType {
@@ -78,9 +105,48 @@ pub enum AssetType {
 #[derive(Debug)]
 pub struct MissingAssetInfo {
     pub account: Address,
-    pub required: AssetSpec,  // What asset/amount is needed
+    pub required: AssetSpec,   // What asset/amount is needed
     pub current_balance: U256, // Current balance (for reporting)
     pub missing_amount: U256,  // How much is missing (for reporting)
+}
+
+#[derive(Debug)]
+pub struct AssetContext {
+    pub potential_asset: PotentialMissingAsset,
+    pub trace: CallTrace,
+    pub storage_accesses: Vec<U256>, // Storage slots accessed during this call
+}
+
+impl AssetContext {
+    /// Extract storage slots accessed during SLOAD operations from trace steps
+    pub fn extract_storage_accesses(trace: &CallTrace) -> Vec<U256> {
+        let mut storage_slots = Vec::new();
+
+        for step in &trace.steps {
+            // Look for SLOAD operations
+            if step.op.as_str() == "SLOAD" {
+                // The storage slot is the top item on the stack before SLOAD
+                if let Some(stack) = &step.stack {
+                    if let Some(slot) = stack.last() {
+                        storage_slots.push(*slot);
+                    }
+                }
+            }
+        }
+
+        storage_slots
+    }
+
+    /// Create AssetContext from trace and potential asset
+    pub fn from_trace(potential_asset: PotentialMissingAsset, trace: CallTrace) -> Self {
+        let storage_accesses = Self::extract_storage_accesses(&trace);
+
+        Self {
+            potential_asset,
+            trace,
+            storage_accesses,
+        }
+    }
 }
 
 // Add default implementations for testing
