@@ -5,7 +5,7 @@ use forge::revm::primitives::{Address, U256};
 use forge::traces::CallTrace;
 
 use crate::simulate::checkers::traits::{AssetChecker, PotentialMissingAsset};
-use crate::simulate::types::{AssetType, MissingAssetInfo};
+use crate::simulate::types::{AssetType, MissingAssetInfo, AssetSpec};
 
 // Define ERC20 function signatures
 sol! {
@@ -127,12 +127,33 @@ impl AssetChecker for ERC20Checker {
         let missing_amount = asset.required_amount.saturating_sub(current_balance);
 
         Ok(MissingAssetInfo {
-            asset_type: asset.asset_type,
-            token_address: asset.token_address,
             account: asset.account,
-            required_amount: asset.required_amount,
+            required: AssetSpec::ERC20 {
+                token: asset.token_address,
+                amount: asset.required_amount,
+            },
             current_balance,
             missing_amount,
         })
+    }
+
+    fn deal(
+        &self,
+        recipient: Address,
+        asset_spec: AssetSpec,
+        executor: &mut Executor,
+    ) -> Result<(), eyre::Error> {
+        // Validate that this is an ERC20 asset spec
+        if let AssetSpec::ERC20 { token, amount } = asset_spec {
+            // TODO: Implement ERC20 deal functionality
+            // This would involve manipulating storage slots to set the balance
+            todo!("ERC20 deal implementation - need to set storage slot for balance mapping")
+        } else {
+            Err(eyre::eyre!("ERC20Checker can only deal ERC20 assets"))
+        }
+    }
+
+    fn asset_type(&self) -> AssetType {
+        AssetType::ERC20
     }
 }

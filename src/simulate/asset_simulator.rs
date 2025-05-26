@@ -149,7 +149,7 @@ impl AssetSimulator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::simulate::{AssetType, checkers::erc20::transferFromCall};
+    use crate::simulate::{checkers::erc20::transferFromCall, types::AssetSpec, AssetType};
     use alloy_primitives::Address as AAddress;
     use alloy_sol_types::{SolCall, sol};
     use forge::revm::primitives::{Address, Bytes, U256};
@@ -294,12 +294,11 @@ mod tests {
         assert!(!result.is_empty(), "Should detect missing balance");
 
         if let Some(asset) = result.first() {
-            assert_eq!(asset.token_address, contract_address);
             assert_eq!(asset.account, sender);
             assert_eq!(asset.missing_amount, amount);
-            assert_eq!(asset.required_amount, amount);
-            assert_eq!(asset.asset_type, AssetType::ERC20);
             assert_eq!(asset.current_balance, U256::ZERO);
+            
+            assert_eq!(asset.required, AssetSpec::ERC20 { token: contract_address, amount });
         }
         Ok(())
     }
@@ -386,12 +385,11 @@ mod tests {
         // We expect to find a missing asset since our test address likely doesn't have 1000 USDC
         assert!(!result.is_empty());
         if let Some(asset) = result.first() {
-            assert_eq!(asset.token_address, token);
             assert_eq!(asset.account, sender);
             assert_eq!(asset.missing_amount, amount);
-            assert_eq!(asset.required_amount, amount);
-            assert_eq!(asset.asset_type, AssetType::ERC20);
             assert_eq!(asset.current_balance, U256::ZERO);
+            
+            assert_eq!(asset.required, AssetSpec::ERC20 { token, amount });
         }
     }
 }
