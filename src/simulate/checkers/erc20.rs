@@ -110,14 +110,15 @@ impl AssetChecker for ERC20Checker {
         };
         let balance_data = balance_call.abi_encode();
 
+        // Use the zero-address as sender to avoid problems when `asset.account`
+        // contains code.
         let balance_result = executor.call_raw(
-            asset.account,
+            Address::ZERO,
             asset.token_address,
             balance_data.into(),
             U256::ZERO,
         )?;
 
-        // Parse the result more idiomatically
         let current_balance = balance_result
             .out
             .and_then(|out| balanceOfCall::abi_decode_returns(&out.data()).ok())
