@@ -9,7 +9,7 @@ what assets are needed, in what amount, and for which accounts, in order for the
 - [x] Test against purely local backend rather than always using fork state
 - [ ] Add checkers for all possible ERC-20 calls 
   - [x] transferFrom
-  - [ ] transfer
+  - [x] transfer
   - [ ] EIP-3009 transferWithAuthorization
   - [ ] ERC-2612 permit
 - [ ] Add checkers for different asset types.
