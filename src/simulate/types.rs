@@ -45,6 +45,48 @@ pub enum AssetSpec {
     },
 }
 
+// -------------------------------------------------------------------------
+//  Manual Hash implementation (maps don't implement Hash)
+// -------------------------------------------------------------------------
+use std::hash::{Hash, Hasher};
+
+impl Hash for AssetSpec {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            AssetSpec::Native(amount) => {
+                state.write_u8(0);
+                amount.hash(state);
+            }
+            AssetSpec::ERC20 { token, amount } => {
+                state.write_u8(1);
+                token.hash(state);
+                amount.hash(state);
+            }
+            AssetSpec::ERC721 { token, token_ids } => {
+                state.write_u8(2);
+                token.hash(state);
+                for id in token_ids {
+                    id.hash(state);
+                }
+            }
+            AssetSpec::ERC1155 {
+                token,
+                token_amounts,
+            } => {
+                state.write_u8(3);
+                token.hash(state);
+                // Hash entries in deterministic key order
+                let mut entries: Vec<_> = token_amounts.iter().collect();
+                entries.sort_by(|a, b| a.0.cmp(b.0));
+                for (id, amt) in entries {
+                    id.hash(state);
+                    amt.hash(state);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AssetGrant {
     pub recipient: Address,
