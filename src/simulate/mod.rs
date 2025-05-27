@@ -4,6 +4,8 @@ pub use self::checkers::traits::{AssetChecker, PotentialMissingAsset};
 pub use self::types::{AssetType, Call, ForkInfo, MissingAssetInfo};
 
 pub mod asset_simulator;
+pub mod builder;
 pub mod checkers;
+pub mod error;
 pub mod types;
 pub mod utils;
