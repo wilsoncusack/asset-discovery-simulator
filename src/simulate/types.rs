@@ -102,7 +102,7 @@ pub enum AssetType {
     ERC1155,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MissingAssetInfo {
     pub account: Address,
     pub required: AssetSpec,   // What asset/amount is needed

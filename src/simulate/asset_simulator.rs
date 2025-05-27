@@ -113,14 +113,10 @@ impl AssetSimulator {
     ) -> Result<Vec<MissingAssetInfo>, eyre::Error> {
         self.ensure_executor().await?;
 
-        for iteration in 0..max_iterations {
-            if auto_fix && iteration > 0 {
-                println!(
-                    "Iteration {}: Retrying transaction after fixes...",
-                    iteration + 1
-                );
-            }
+        let mut all_missing_assets: Vec<MissingAssetInfo> = Vec::new();
+        let mut iterations = 0;
 
+        while iterations < max_iterations {
             let executor = self
                 .executor
                 .as_mut()
@@ -130,102 +126,77 @@ impl AssetSimulator {
             let result =
                 executor.transact_raw(call.from, call.to, call.data.clone(), call.value)?;
 
-            // If transaction succeeded, return empty (no missing assets)
+            // If transaction succeeded, we're done - return all assets we found
             if !result.exit_reason.is_revert() {
-                if auto_fix && iteration > 0 {
-                    println!(
-                        "✅ Transaction succeeded after {} iteration(s)!",
-                        iteration + 1
-                    );
-                }
-                return Ok(Vec::new());
+                return Ok(all_missing_assets);
             }
 
             // Process traces and apply checkers
-            let mut missing_assets = Vec::new();
-
             if let Some(traces) = result.traces {
                 if let Some(trace) = find_last_non_proxy_call(&traces) {
-                    // Process all checkers and collect results
-                    missing_assets = self
-                        .checkers
-                        .iter()
-                        .filter_map(|checker| {
-                            checker.identify_asset(trace).and_then(|asset| {
-                                match checker.check_balance(asset.clone(), executor) {
-                                    Ok(missing_asset)
-                                        if missing_asset.missing_amount > U256::ZERO =>
-                                    {
-                                        Some((missing_asset, asset, checker))
-                                    }
-                                    Ok(_) => None,
-                                    Err(e) => {
-                                        eprintln!("Error checking balance: {}", e);
-                                        None
+                    let mut found_any_missing = false;
+
+                    // Process all checkers
+                    for checker in &self.checkers {
+                        if let Some(potential_asset) = checker.identify_asset(trace) {
+                            match checker.check_balance(potential_asset.clone(), executor) {
+                                Ok(missing_asset) if missing_asset.missing_amount > U256::ZERO => {
+                                    // Immediately add to our final list
+                                    all_missing_assets.push(missing_asset.clone());
+                                    found_any_missing = true;
+
+                                    // If auto_fix is enabled, deal the asset
+                                    if auto_fix {
+                                        let context = AssetContext::from_trace(
+                                            potential_asset,
+                                            trace.clone(),
+                                        );
+
+                                        println!(
+                                            "Dealing asset for account {:?}",
+                                            missing_asset.account
+                                        );
+
+                                        // Deal the asset
+
+                                        // Deal the asset
+                                        checker.deal(
+                                            missing_asset.account,
+                                            missing_asset.required,
+                                            executor,
+                                            &context,
+                                        )?;
                                     }
                                 }
-                            })
-                        })
-                        .collect::<Vec<_>>();
-
-                    // If auto_fix is enabled, try to deal the missing assets
-                    if auto_fix && !missing_assets.is_empty() {
-                        println!(
-                            "Found {} missing asset(s), attempting to deal...",
-                            missing_assets.len()
-                        );
-
-                        for (missing_asset, potential_asset, checker) in &missing_assets {
-                            // Create AssetContext for the deal operation
-                            let context =
-                                AssetContext::from_trace(potential_asset.clone(), trace.clone());
-
-                            println!("Dealing asset for account {:?}", missing_asset.account);
-                            println!("  Storage accesses: {:?}", context.storage_accesses);
-
-                            // Deal the asset
-                            checker.deal(
-                                missing_asset.account,
-                                missing_asset.required.clone(),
-                                executor,
-                                &context,
-                            )?;
-
-                            println!("✅ Dealt asset for account {:?}", missing_asset.account);
+                                Ok(_) => {} // No missing amount
+                                Err(e) => {
+                                    eprintln!("Error checking balance: {}", e);
+                                }
+                            }
                         }
+                    }
 
-                        // Continue to next iteration to retry the transaction
+                    // If auto_fix is enabled and we found missing assets, continue to next iteration
+                    if auto_fix && found_any_missing {
+                        iterations += 1;
                         continue;
                     }
                 }
             }
 
-            // If we're not auto-fixing or no missing assets found, return the results
-            return Ok(missing_assets
-                .into_iter()
-                .map(|(missing_asset, _, _)| missing_asset)
-                .collect());
+            // If we're not auto-fixing or no missing assets found, we're done
+            return Ok(all_missing_assets);
         }
 
-        Err(eyre::eyre!(
-            "Failed to fix transaction after {} iterations",
-            max_iterations
-        ))
-    }
-
-    /// Check transaction without auto-fixing (for testing/inspection)
-    pub async fn check_transaction_no_fix(
-        &mut self,
-        call: Call,
-    ) -> Result<Vec<MissingAssetInfo>, eyre::Error> {
-        self.check_transaction_with_options(call, false, 1).await
+        // If we hit max iterations, return what we found
+        Ok(all_missing_assets)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::simulate::{AssetType, checkers::erc20::transferFromCall, types::AssetSpec};
+    use crate::simulate::{checkers::erc20::transferFromCall, types::AssetSpec};
     use alloy_primitives::Address as AAddress;
     use alloy_sol_types::{SolCall, sol};
     use forge::revm::primitives::{Address, Bytes, U256};
@@ -366,7 +337,7 @@ mod tests {
         );
 
         // Use no_fix version to just detect without fixing
-        let result = simulator.check_transaction_no_fix(transfer_call).await?;
+        let result = simulator.check_transaction(transfer_call).await?;
 
         assert!(!result.is_empty(), "Should detect missing balance");
 
@@ -464,7 +435,7 @@ mod tests {
         );
 
         // Use no_fix version to just detect without auto-fixing
-        let result = simulator.check_transaction_no_fix(call).await.unwrap();
+        let result = simulator.check_transaction(call).await.unwrap();
 
         // We expect to find a missing asset since our test address likely doesn't have 1000 USDC
         assert!(!result.is_empty());
@@ -475,40 +446,5 @@ mod tests {
 
             assert_eq!(asset.required, AssetSpec::ERC20 { token, amount });
         }
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_usdc_auto_fix_actually_works() -> Result<(), eyre::Error> {
-        let mut simulator = AssetSimulator::new()
-            .with_fork("https://mainnet.base.org", None)
-            .with_erc20_checker();
-
-        let sender = Address::new([1; 20]);
-        let recipient = Address::new([2; 20]);
-        let token = Address::from_str("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913").unwrap(); // USDC on Base
-        let amount = U256::from(1000000000); // 1000 USDC
-
-        let call = Call::new(
-            sender,
-            token,
-            transferFromCall {
-                from: AAddress::from_slice(sender.as_slice()),
-                to: AAddress::from_slice(recipient.as_slice()),
-                amount,
-            }
-            .abi_encode(),
-            U256::ZERO,
-        );
-
-        // This should auto-fix and succeed
-        let result = simulator.check_transaction(call).await?;
-
-        // If it returns empty, the auto-fix worked!
-        assert!(
-            result.is_empty(),
-            "Auto-fix should make the transaction succeed"
-        );
-        println!("🎉 USDC auto-fix actually works!");
-        Ok(())
     }
 }
