@@ -2650,6 +2650,8 @@ dependencies = [
  "forge",
  "foundry-config",
  "foundry-evm-core",
+ "log",
+ "thiserror 1.0.69",
  "tokio",
 ]
 

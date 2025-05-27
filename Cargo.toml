@@ -11,3 +11,5 @@ forge = {git = "https://github.com/foundry-rs/foundry.git", package = "forge"}
 foundry-config = {git = "https://github.com/foundry-rs/foundry.git", package = "foundry-config"}
 foundry-evm-core = {git = "https://github.com/foundry-rs/foundry.git", package = "foundry-evm-core"}
 alloy-primitives = "1.1.0"
+log        = "0.4"
+thiserror  = "1.0"

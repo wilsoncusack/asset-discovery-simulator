@@ -15,5 +15,6 @@ what assets are needed, in what amount, and for which accounts, in order for the
 - [ ] Add checkers for different asset types.
   - [ ] ERC-721
   - [ ] ERC-1155
-- [ ] Add a `deal` function to the AssetChecker trait which allows simulating the account has the required assets, in order to discover other assets that are needed. [Prior art](https://github.com/foundry-rs/forge-std/pull/505).
+  - [ ] Native asset
+- [x] Add a `deal` function to the AssetChecker trait which allows simulating the account has the required assets, in order to discover other assets that are needed. [Prior art](https://github.com/foundry-rs/forge-std/pull/505).
 - [ ] Update API to allow specifying the account of interest, and ignore reverts related to other accounts.
